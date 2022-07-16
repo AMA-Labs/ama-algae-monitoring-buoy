@@ -9,8 +9,9 @@ python -i main.py
 
 import sys
 
+# You can change the project with an argument
 ProjectID = 4599
-if len(sys.argv) > 0:
+if len(sys.argv) > 0 and sys.argv[0].isnumeric():
     ProjectID = int(sys.argv[0])
 
 
@@ -79,11 +80,11 @@ taxasAPI = taxonomy_tree_api.TaxonomyTreeApi(api_client)
 
 # Get all the objects in this project
 objectsList = objectsListAPI.get_object_set(ProjectID, ProjectFilters())
-# Get project metadata
-projectVals = projectsAPI.project_query(ProjectID)
-# Get a sample object in this list
-sample = objectAPI.object_query(objectsList.object_ids[0])
 
+# Get project metadata (unused atm)
+projectVals = projectsAPI.project_query(ProjectID)
+
+# Setup the save directories 
 cwd = os.getcwd()
 print("""Creating directories in : """ + cwd + """
     images
@@ -103,23 +104,78 @@ for parent in ['images', 'labels']:
 training_images_loc = cwd + "/images/train/"
 training_labels_loc = cwd + "/labels/train/"
 
-print("Starting download (" + str(objectsList.total_ids) + " items total)")
+# get all classification names used so far (if previous run used)
+classification_names = {}
 classifications = {}
-for i in range(objectsList.total_ids):
-    sampleOBJ = objectAPI.object_query(objectsList.object_ids[i])
-    classification = taxasAPI.query_taxa(sampleOBJ["classif_id"])["display_name"]
+pattern = r'[^A-Za-z0-9]+'
+folder_contents = os.listdir(training_images_loc)
 
-    increment_val = 0
-    pattern = r'[^A-Za-z0-9]+'
-    classification = re.sub(pattern, '-', classification)
-    if classification in classifications.keys():
-        classifications[classification] += 1
-        increment_val = classifications[classification]
+for file in folder_contents:
+    class_id = os.path.basename(file).split("_")[0]
+    if class_id.isnumeric():
+        if not (int(class_id) in classification_names):
+            classification = taxasAPI.query_taxa(int(class_id))["display_name"]
+            classification = re.sub(pattern, '-', classification)
+            classification_names[int(class_id)] = classification
+            classifications[int(class_id)] = 0
+        classifications[int(class_id)] += 1
+
+
+# Print what we've started with
+for classID in classification_names.keys():
+    print("Found " + str(classifications[classID]) + " " + classification_names[classID])
+starting_point = sum(classifications.values())
+print("Found " + str(starting_point) + " previous entries.")
+
+# Sorting our object IDs
+sortedObjectList = list(objectsList.object_ids)
+sortedObjectList.sort()
+
+# Checking the first [starting_point] objects to organize our classifications in that order
+print("Checking first " + str(starting_point) + " objects for classification ID ordering.")
+classification_order = []
+for i in range(starting_point):
+    sampleOBJ = objectAPI.object_query(sortedObjectList[i])
+    classid = sampleOBJ["classif_id"]
+    if not classid in classification_order:
+        classification_order.append(classid)
+    if len(classification_order) == len(classifications):
+        for key in classification_order:
+            if not key in classifications.keys():
+                print("New classification ID found, restart required.")
+                starting_point = 0
+                classifications = {}
+                classification_names = {}
+                classification_order = []
+                break
+        break
+
+if len(classification_order) > 0:
+    print("Reordering categories in order.")
+    new_classifications = {}
+    new_classifications_names = {}
+    for x in classification_order:
+        new_classifications[x] = classifications[x]
+        new_classifications_names[x] = classification_names[x]
+    classifications = new_classifications
+    classification_names = new_classifications_names
+
+print("Starting download (" + str(len(sortedObjectList)) + " items total)")
+for i in range(starting_point, len(sortedObjectList)):
+    sampleOBJ = objectAPI.object_query(sortedObjectList[i])
+    classid = sampleOBJ["classif_id"]
+
+    if classid in classifications.keys():
+        classifications[classid] += 1
     else:
-        classifications[classification] = 0
+        classifications[classid] = 1
+        classification = taxasAPI.query_taxa(int(classid))["display_name"]
+        classification = re.sub(pattern, '-', classification)
+        classification_names[classid] = classification
     
-    class_num = list(classifications.keys()).index(classification)
-    save_file_base = classification + "_" + str(increment_val)
+    increment_val = classifications[classid]
+    classification = classification_names[classid]
+    save_file_base = str(classid) + "_" + classification + "_" + str(sortedObjectList[i])
 
     skipped_images = 0
     total_images = len(sampleOBJ['images'])
@@ -133,12 +189,12 @@ for i in range(objectsList.total_ids):
 
         img_location = "https://ecotaxa.obs-vlfr.fr/vault/" + sampleOBJ['images'][img_index]['file_name']
         img_data = requests.get(img_location).content
+        with open(training_labels_loc + save_file + ".txt", "w") as handler:
+            line = str(list(classifications.keys()).index(classid)) + " .5 .5 .5 .5" # Assuming full image
+            handler.write(line)
         with open(training_images_loc + save_file + ".jpg", "wb") as handler:
             handler.write(img_data)
-        with open(training_labels_loc + save_file + ".txt", "w") as handler:
-            line = str(class_num) + " .5 .5 .5 .5" # Assuming full image
-            handler.write(line)
-    print("Finished item " + str(i) + " of " + str(objectsList.total_ids) + ". " + str(total_images - skipped_images) + "/" + str(total_images) + " images fetched. Classification: " + classification + " #" + str(1+increment_val))
+    print("Finished item " + str(i+1) + " of " + str(len(sortedObjectList)) + ". " + str(total_images - skipped_images) + "/" + str(total_images) + " images fetched. Classification: " + classification + " #" + str(increment_val))
 
 print("Making configuration file")
 print(str(list(classifications.keys())))
@@ -149,7 +205,7 @@ train: """ + training_images_loc + """
 val: """ + training_images_loc + """
 
 nc = """ + str(len(classifications.keys())) + """
-names: """ + str(list(classifications.keys())) + """
+names: """ + str(list(classification_names.values())) + """
 
 # EOF
     """
