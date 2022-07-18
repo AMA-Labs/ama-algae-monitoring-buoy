@@ -31,6 +31,7 @@ import os
 import requests
 import unicodedata
 import re
+import collections
 
 # Defining the host is optional and defaults to https://ecotaxa.obs-vlfr.fr/api
 # See configuration.py for a list of all supported configuration parameters.
@@ -111,14 +112,19 @@ pattern = r'[^A-Za-z0-9]+'
 folder_contents = os.listdir(training_images_loc)
 
 for file in folder_contents:
-    class_id = os.path.basename(file).split("_")[0]
+    class_id = os.path.basename(file).split(".")[0].split("_")[0]
+    # 0 is class ID
+    # 1 is class descriptor
+    # 2 is object ID
+    # 3 is optional picture number
     if class_id.isnumeric():
         if not (int(class_id) in classification_names):
             classification = taxasAPI.query_taxa(int(class_id))["display_name"]
             classification = re.sub(pattern, '-', classification)
             classification_names[int(class_id)] = classification
             classifications[int(class_id)] = 0
-        classifications[int(class_id)] += 1
+        if len(os.path.basename(file).split(".")[0].split("_")) == 3:
+            classifications[int(class_id)] += 1
 
 
 # Print what we've started with
@@ -132,24 +138,23 @@ sortedObjectList = list(objectsList.object_ids)
 sortedObjectList.sort()
 
 # Checking the first [starting_point] objects to organize our classifications in that order
-print("Checking first " + str(starting_point) + " objects for classification ID ordering.")
+print("Checking " + str(starting_point) + " files for classification ID ordering.")
 classification_order = []
-for i in range(starting_point):
-    sampleOBJ = objectAPI.object_query(sortedObjectList[i])
-    classid = sampleOBJ["classif_id"]
-    if not classid in classification_order:
-        classification_order.append(classid)
-    if len(classification_order) == len(classifications):
-        for key in classification_order:
-            if not key in classifications.keys():
-                print("New classification ID found, restart required.")
-                starting_point = 0
-                classifications = {}
-                classification_names = {}
-                classification_order = []
-                break
-        break
+__order_by_ID = {}
 
+# Getting all the files ID-ClassID values
+for file in folder_contents:
+    metadata = os.path.basename(file).split(".")[0].split("_")
+    object_id = (int)(metadata[2])
+    classid = (int)(metadata[0])
+    __order_by_ID[object_id] = classid
+
+# Sort by object ID, get all unique class ID values
+__order_by_ID = collections.OrderedDict(sorted(__order_by_ID.items()))
+for value in list(set(list(__order_by_ID.values()))):
+    classification_order.append(value)
+
+# Based on classification_order, reorganize the IDs
 if len(classification_order) > 0:
     print("Reordering categories in order.")
     new_classifications = {}
@@ -163,13 +168,23 @@ if len(classification_order) > 0:
 print("Starting download (" + str(len(sortedObjectList)) + " items total)")
 for i in range(starting_point, len(sortedObjectList)):
     sampleOBJ = objectAPI.object_query(sortedObjectList[i])
+    if sampleOBJ is None:
+        print("Item skipped - bad sample: " + str(sortedObjectList[i]))
+        continue
     classid = sampleOBJ["classif_id"]
+    if classid is None:
+        print("Item skipped - unknown classid (sample ID: " + str(sortedObjectList[i]) + ")")
+        continue
 
     if classid in classifications.keys():
         classifications[classid] += 1
     else:
+        taxaObj = taxasAPI.query_taxa(int(classid))
+        if taxaObj is None:
+            print("Item skipped - bad classification: " + str(classid))
+            continue
         classifications[classid] = 1
-        classification = taxasAPI.query_taxa(int(classid))["display_name"]
+        classification = taxaObj
         classification = re.sub(pattern, '-', classification)
         classification_names[classid] = classification
     
@@ -188,12 +203,16 @@ for i in range(starting_point, len(sortedObjectList)):
             continue
 
         img_location = "https://ecotaxa.obs-vlfr.fr/vault/" + sampleOBJ['images'][img_index]['file_name']
-        img_data = requests.get(img_location).content
-        with open(training_labels_loc + save_file + ".txt", "w") as handler:
-            line = str(list(classifications.keys()).index(classid)) + " .5 .5 .5 .5" # Assuming full image
-            handler.write(line)
-        with open(training_images_loc + save_file + ".jpg", "wb") as handler:
-            handler.write(img_data)
+        try:
+            img_data = requests.get(img_location).content
+            with open(training_labels_loc + save_file + ".txt", "w") as handler:
+                line = str(list(classifications.keys()).index(classid)) + " .5 .5 .5 .5" # Assuming full image
+                handler.write(line)
+            with open(training_images_loc + save_file + ".jpg", "wb") as handler:
+                handler.write(img_data)
+        except:
+            skipped_images += 1
+            print("Could not download image/wrtite file: " + img_location)
     print("Finished item " + str(i+1) + " of " + str(len(sortedObjectList)) + ". " + str(total_images - skipped_images) + "/" + str(total_images) + " images fetched. Classification: " + classification + " #" + str(increment_val))
 
 print("Making configuration file")
