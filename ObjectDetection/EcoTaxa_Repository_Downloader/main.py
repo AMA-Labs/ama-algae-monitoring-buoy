@@ -206,7 +206,7 @@ for i in range(starting_point, len(sortedObjectList)):
         try:
             img_data = requests.get(img_location).content
             with open(training_labels_loc + save_file + ".txt", "w") as handler:
-                line = str(list(classifications.keys()).index(classid)) + " .5 .5 .5 .5" # Assuming full image
+                line = str(list(classifications.keys()).index(classid)) + " .5 .5 1.0 1.0" # Assuming full image
                 handler.write(line)
             with open(training_images_loc + save_file + ".jpg", "wb") as handler:
                 handler.write(img_data)
