@@ -223,7 +223,7 @@ with open(cwd + "/config.yaml", "w") as handler:
 train: """ + training_images_loc + """
 val: """ + training_images_loc + """
 
-nc = """ + str(len(classifications.keys())) + """
+nc: """ + str(len(classifications.keys())) + """
 names: """ + str(list(classification_names.values())) + """
 
 # EOF
