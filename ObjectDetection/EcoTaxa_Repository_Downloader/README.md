@@ -45,7 +45,7 @@ labels
 + train
 + val
 ```
-It will begin checking <ins>**every**</ins> object in the project directory. This will take a long time for big projects. Project 4599 above has over 300,000 entries. The good news is that if you've already started this, it will skip the image saving and metadata file portion of the run. The script will post a status update with every object saved. It will create 2 files, an image with the class descriptor in images/train, and a metadata file that references the classification ID in labels/train.
+The script will use the filenames of fetched images to determine class ID orders. It will skip the image saving and metadata creation portions of the process and resume the run from where it left off. The script will print a status update with every object saved or skipped (and the reason it was skipped) to the console. It will create 2 files, an image with the class descriptor in images/train, and a metadata file that references the classification ID in labels/train. Some samples have multiple images. An image will be skipped if it cannot be accessed or if it is already saved, and the number of saved images is given in the status updates.
 
 Lastly, the script makes a configuration file with a list of all of the classes in their ID order as well as the locations of the training images.
 
