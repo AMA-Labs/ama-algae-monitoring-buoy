@@ -24,11 +24,11 @@ import functools
 import select
 
 # Basic planktoscope libraries
-import planktoscope.mqtt
-import operations
-import encoder
-import streamer
-import ecotaxa
+import PlanktoScope_IsolatedSegmenter.planktoscope.mqtt
+import PlanktoScope_IsolatedSegmenter.operations as operations
+import PlanktoScope_IsolatedSegmenter.encoder as encoder
+import PlanktoScope_IsolatedSegmenter.streamer as streamer
+import PlanktoScope_IsolatedSegmenter.ecotaxa as ecotaxa
 
 
 ################################################################################
@@ -103,6 +103,8 @@ class SegmenterProcess(multiprocessing.Process):
         self.__mask_array = None
         self.__mask_to_remove = None
         self.__save_debug_img = True
+        self.minpixsize = 0
+        self.maxpixsize = 1000000
 
         # create all base path
         for path in [
@@ -192,6 +194,7 @@ class SegmenterProcess(multiprocessing.Process):
         # logger.debug(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         # Read images
         image = cv2.imread(filepath)
+        real_img = np.copy(image)
         # print(image)
 
         # logger.debug(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -227,7 +230,7 @@ class SegmenterProcess(multiprocessing.Process):
                 image,
                 os.path.join(self.__working_debug_path, "cleaned_image.jpg"),
             )
-        return image
+        return (image, real_img)
 
     def _create_mask(self, img, debug_saving_path):
         logger.info("Starting the mask creation")
@@ -423,7 +426,7 @@ class SegmenterProcess(multiprocessing.Process):
         if not pipe_full(streamer.sender):
             streamer.sender.send(img_object)
 
-    def _slice_image(self, img, name, mask, start_count=0):
+    def _slice_image(self, img, name, mask, start_count=0, real_img = None):
         """Slice a given image using give mask
 
         Args:
@@ -484,12 +487,12 @@ class SegmenterProcess(multiprocessing.Process):
             # Publish the object_id to via MQTT to Node-RED
 
             # First extract to get all the metadata about the image
-            obj_image = img[region.slice]
+            obj_image = real_img[region.slice]
             colors = self._get_color_info(obj_image, region.filled_image)
             metadata = self._extract_metadata_from_regionprop(region)
 
             # Second extract to get a bigger image for saving
-            obj_image = img[__augment_slice(region.slice, labels.shape, 10)]
+            obj_image = real_img[__augment_slice(region.slice, labels.shape, 10)]
             object_id = f"{name}_{i}"
             object_fn = os.path.join(path, f"{object_id}.jpg")
 
@@ -628,7 +631,7 @@ class SegmenterProcess(multiprocessing.Process):
             start = time.monotonic()
             logger.info(f"Starting work on {name}, image {i+1}/{images_count}")
 
-            img = self._open_and_apply_flat(
+            img, real_img = self._open_and_apply_flat(
                 os.path.join(self.__working_path, images_list[i]), self.__flat
             )
 
@@ -647,7 +650,7 @@ class SegmenterProcess(multiprocessing.Process):
             # logger.debug(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
-            objects_count, _ = self._slice_image(img, name, mask, total_objects)
+            objects_count, _ = self._slice_image(img, name, mask, total_objects, real_img)
             total_objects += objects_count
             # Simple heuristic to detect a movement of the flow cell and a change in the resulting flat
             # TODO: this heuristic should be improved or removed if deemed unnecessary
